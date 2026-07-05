@@ -1,0 +1,5 @@
+*.log
+.DS_Store
+.env
+history.json
+__pycache__/
