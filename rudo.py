@@ -59,7 +59,8 @@ def stream_reply(messages: list[dict]):
     """Yield content tokens from a streaming /api/chat call."""
     req = urllib.request.Request(
         f"{OLLAMA}/api/chat",
-        data=json.dumps({"model": MODEL, "messages": messages, "stream": True}).encode(),
+        data=json.dumps({"model": MODEL, "messages": messages, "stream": True,
+                         "keep_alive": "30m"}).encode(),
         headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req) as r:
