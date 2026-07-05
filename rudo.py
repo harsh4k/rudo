@@ -55,6 +55,19 @@ def check_model(tags: dict) -> None:
         raise RuntimeError(f"model '{MODEL}' not found — run: ollama create rudo -f Modelfile")
 
 
+def warm_model() -> None:
+    """Best-effort: make Ollama load the model while the boot animation plays."""
+    req = urllib.request.Request(
+        f"{OLLAMA}/api/generate",
+        data=json.dumps({"model": MODEL, "keep_alive": "30m"}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        urllib.request.urlopen(req, timeout=120).read()
+    except OSError:
+        pass  # boot checks surface real errors; warmup stays silent
+
+
 def stream_reply(messages: list[dict]):
     """Yield content tokens from a streaming /api/chat call."""
     req = urllib.request.Request(
@@ -88,6 +101,7 @@ def save_history(history: list[dict]) -> None:
 # ---------------------------------------------------------------------- boot
 
 def boot_sequence(history: list[dict]) -> None:
+    threading.Thread(target=warm_model, daemon=True).start()  # load model during the theater
     if FAST:  # no theater when piped or hurried — just the health checks
         try:
             check_model(check_core())
