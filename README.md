@@ -7,12 +7,7 @@ personal notes), voice in/out, and live system awareness.
 
 ## Interface
 
-Retro terminal-log look: cyan logo with a session tag (`SESSION: 0x3F2A //
-PID`), host and date top-right, system status bullets, and a command grid —
-no boxes. The chat itself is a timestamped log:
-
-    [14:29:15] > how's my battery?
-    [14:29:18] < RUDO: 84%, plugged in.
+<img width="1893" height="958" alt="image" src="https://github.com/user-attachments/assets/254662a7-7184-4154-8dde-725395192d3d" />
 
 Colors mean things: **green** is you, **cyan** is Rudo, **red** is alerts.
 
