@@ -278,11 +278,11 @@ def chat(history: list[dict]) -> None:
                     reply = next(gen, "")
                 finally:
                     stop.set()
-            with Live(Markdown(reply), console=console, refresh_per_second=10,
+            with Live(Markdown(reply, style="cyan"), console=console, refresh_per_second=10,
                       vertical_overflow="visible") as live:
                 for token in gen:
                     reply += token
-                    live.update(Markdown(reply))
+                    live.update(Markdown(reply, style="cyan"))
         except KeyboardInterrupt:
             console.print("[dim]— interrupted[/]")
         except (OSError, json.JSONDecodeError) as e:
