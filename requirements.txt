@@ -1,1 +1,6 @@
 rich
+psutil
+ddgs
+# voice input (heavier download — /v works once these are in)
+faster-whisper
+sounddevice

@@ -1,14 +1,27 @@
 # Rudo
 
-Personal AI assistant (Jarvis-style) built on Gemma 4 via Ollama, with a
+Personal AI assistant (Jarvis-style) built on Gemma 3 via Ollama, with a
 terminal chat UI: boot animation, streaming replies, markdown + code
-rendering, and persistent memory.
+rendering, persistent memory, tools (shell, web search, file read, timers,
+personal notes), voice in/out, and live system awareness.
+
+## Interface
+
+Retro terminal-log look: cyan logo with a session tag (`SESSION: 0x3F2A //
+PID`), host and date top-right, system status bullets, and a command grid —
+no boxes. The chat itself is a timestamped log:
+
+    [14:29:15] > how's my battery?
+    [14:29:18] < RUDO: 84%, plugged in.
+
+Colors mean things: **green** is you, **cyan** is Rudo, **red** is alerts.
 
 ## Requirements
 
 - [Ollama](https://ollama.com) running locally
-- `gemma4:latest` pulled
-- Python 3.10+ with `pip install rich`
+- `gemma3:4b` pulled
+- `nomic-embed-text` pulled (only for `/index` + `/notes`)
+- Python 3.12+ with `pip install -r requirements.txt`
 
 ## Setup
 
@@ -31,16 +44,43 @@ exists, and restores chat history from `history.json`.
 | Command | Action |
 |---------|--------|
 | `/new`  | Wipe memory (chat history) |
+| `cls`   | Clear the screen |
+| `/v` | Voice input — talk, press Enter to stop |
+| `/speak` | Toggle spoken replies |
+| `/clip [question]` | Ask about whatever is on your clipboard |
+| `/web <query>` | Web-search, answer from the results |
+| `/index <folder>` | Index a folder of `.md`/`.txt` notes |
+| `/notes <question>` | Answer from your indexed notes |
 | `/help` | List commands |
 | `/quit` | Exit (Ctrl+C works too) |
 
 `--fast` skips the boot animation delays.
+
+## Tools
+
+Rudo can act, not just talk. When a question needs it, the model emits a
+one-line JSON tool call that rudo.py executes and feeds back:
+
+- **shell** — run a Windows command (you confirm y/N first, always)
+- **read** — read a text file
+- **web** — DuckDuckGo search, no API key
+- **notes** — semantic search over your `/index`ed notes
+- **timer** — countdown that beeps
+
+Every request also carries live system status (time, CPU, RAM, battery,
+cwd), so "how's my battery?" just works.
 
 ## Customize
 
 Edit the `SYSTEM` and `PARAMETER` lines in `Modelfile`, then rebuild:
 
     ollama create rudo -f Modelfile
+
+## Tests
+
+    python test_rudo.py
+
+Smallest checks that fail if the tool-call parsing/dispatch breaks.
 
 ## Specs it was tuned for
 
