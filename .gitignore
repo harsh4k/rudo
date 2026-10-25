@@ -3,3 +3,4 @@
 .env
 history.json
 __pycache__/
+rag.json
