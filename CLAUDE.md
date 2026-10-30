@@ -23,7 +23,7 @@ server and, when the `web` tool or `/web` is used, to DuckDuckGo.
 | System stats | `psutil` (optional; degrades to clock-only) |
 | Web search | `ddgs` (optional; no API key) |
 | Voice in | `faster-whisper` + `sounddevice` (optional) |
-| Voice out, clipboard | Windows PowerShell / SAPI (Windows-only today) |
+| Voice out, clipboard | OS tools: SAPI/PowerShell, `say`/`pbpaste`, espeak-ng/spd-say + wl-paste/xclip |
 | Notes search | `nomic-embed-text` embeddings, stored in `rag.json`, cosine scan in pure Python |
 
 There is no server, no database and no web UI. Do not add one.
@@ -31,11 +31,15 @@ There is no server, no database and no web UI. Do not add one.
 ## Layout
 
 ```
-rudo.py          The whole app: Ollama client, history, tools, voice, boot screen, chat loop
-test_rudo.py     Tool-call parsing and dispatch checks
-Modelfile        Base model, sampling params, system prompt (persona)
-rudo.cmd         Windows launcher so `rudo` works from any shell on PATH
-requirements.txt Runtime dependencies
+rudo.py              The whole app: Ollama client, history, platform helpers, tools,
+                     voice, boot screen, chat loop (section banners separate them)
+test_rudo.py         pytest suite, incl. end-to-end chat tests against a stub Ollama
+Modelfile            Base model, sampling params, system prompt (persona)
+rudo.cmd             Windows launcher so `rudo` works from any shell on PATH
+requirements.txt     Runtime dependencies
+requirements-dev.txt pytest + ruff
+pyproject.toml       ruff + pytest config only (not an installable package)
+.github/workflows/   CI: ruff + pytest on Windows/macOS/Linux x py3.12/3.13
 ```
 
 Runtime files written next to `rudo.py` (both are personal data and must stay out of git):
@@ -47,11 +51,12 @@ Runtime files written next to `rudo.py` (both are personal data and must stay ou
 ollama create rudo -f Modelfile     # build the model after editing Modelfile
 pip install -r requirements.txt
 python rudo.py                      # run (add --fast to skip the boot animation)
-python test_rudo.py                 # tests
 RUDO_OLLAMA=http://host:11434 python rudo.py   # point at another Ollama
-```
 
-There is no lint or CI config yet; see the roadmap.
+pip install -r requirements-dev.txt
+python -m pytest -W error           # tests (no Ollama needed)
+ruff check .                        # lint; don't run `ruff format`, it restyles everything
+```
 
 ## How the tool loop works
 
@@ -64,9 +69,14 @@ There is no lint or CI config yet; see the roadmap.
 Rules for tools:
 - New tools are added to the `TOOLS` dict and `TOOL_PROMPT` together, with a test.
 - A tool never raises into the chat loop; failures come back as strings.
-- Anything that changes the machine or reads private data asks the user first
-  (`shell` already does). Tool output from the web or files is untrusted input to the
-  model, so never let one tool's output silently trigger another privileged tool.
+- Anything that changes the machine or reads private data asks the user first via
+  `confirm()` (`shell`, `read`). Default is no; Ctrl+C or EOF at the prompt is no.
+- Tool output is untrusted input to the model. Once private data has been in the
+  context (`has_private()`: read/notes/shell results, `/notes`, `/clip`), a
+  model-initiated `web` call must be confirmed. The flag is sticky for the session.
+  Never let one tool's output silently trigger another privileged tool.
+- Bare tool-call replies are hidden while streaming (`maybe_tool_call`) and shown as a
+  one-line `tool_trace` instead of raw JSON.
 
 ## Conventions
 
@@ -77,23 +87,27 @@ Rules for tools:
 - UI colours have meaning: green = user, cyan = Rudo, red = errors/alerts,
   yellow = in-progress / needs confirmation, dim = metadata.
 - The UI must work in an 80-column terminal and when piped (`FAST` mode).
-- Platform-specific code (PowerShell, `winsound`) is guarded so the app still runs
-  elsewhere.
+- All OS-specific code lives in the `platform` section of `rudo.py`
+  (`clipboard_text`, `tts_command`, `beep`, `SHELL_KIND`) and degrades with an install
+  hint instead of raising. Don't scatter `IS_WIN` checks elsewhere.
 
 ## Definition of done
 
-- `python test_rudo.py` passes, with a regression test for any bug fixed.
+- `ruff check .` and `python -m pytest -W error` pass, with a regression test for any
+  bug fixed. CI is green on all six jobs.
 - The app was actually run (against real Ollama, or a stub server when Ollama is not
   available) and the changed path was exercised.
 - README updated when commands, tools or setup change.
 
-## Roadmap
+## Status and roadmap
 
-Tracked in the project thread's audit. In order:
-1. Correctness and safety: confirm before the `read` tool, stop `/notes` crashing when
-   Ollama drops, git-ignore `rag.json`, timeouts on the chat stream.
-2. UX polish: hide raw tool-call JSON, usage hints for `/web` and `/notes` with no
-   query, help table that fits 80 columns, history trimming on message boundaries.
-3. Project hygiene: `pyproject.toml` with ruff, pytest suite, GitHub Actions CI,
-   README and LICENSE refresh.
-4. Optional: macOS/Linux support for clipboard, speech and timer beeps.
+Done (Oct 2026): safety fixes (confirm `read`, web-search guard, `/notes` crash,
+stream timeout, `rag.json` ignored), UX polish (no raw tool JSON, usage hints,
+80-column help, clean trimming), pytest + ruff + CI, macOS/Linux support, README and
+MIT license.
+
+Open:
+- Smoke test against real Ollama + Gemma on Windows (CI uses a stub server).
+- Tool results are tagged by a `TOOL RESULT` text prefix; Ollama's `tool` role would
+  be more robust but needs testing with the Gemma chat template first.
+- Timer alerts print over the input line (stdlib `input()` can't redraw it).
