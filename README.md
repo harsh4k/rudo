@@ -17,6 +17,9 @@ Colors mean things: **green** is you, **cyan** is Rudo, **red** is alerts.
 - `gemma3:4b` pulled
 - `nomic-embed-text` pulled (only for `/index` + `/notes`)
 - Python 3.12+ with `pip install -r requirements.txt`
+- Works on Windows, macOS and Linux. On Linux, `/clip` needs `wl-clipboard`
+  (Wayland) or `xclip`/`xsel` (X11), and `/speak` needs `espeak-ng`, `espeak`
+  or `spd-say`. Windows and macOS use the built-in clipboard and voice.
 
 ## Setup
 
@@ -27,9 +30,8 @@ Colors mean things: **green** is you, **cyan** is Rudo, **red** is alerts.
 
     python rudo.py
 
-or just:
-
-    rudo
+or just `rudo` on Windows (via `rudo.cmd` on your PATH). On macOS/Linux add
+`alias rudo="python3 /path/to/rudo/rudo.py"` to your shell profile.
 
 The boot sequence is real: it checks Ollama is reachable, the `rudo` model
 exists, and restores chat history from `history.json`.
@@ -56,7 +58,7 @@ exists, and restores chat history from `history.json`.
 Rudo can act, not just talk. When a question needs it, the model emits a
 one-line JSON tool call that rudo.py executes and feeds back:
 
-- **shell** — run a Windows command (you confirm y/N first, always)
+- **shell** — run a command in your OS shell (you confirm y/N first, always)
 - **read** — read a text file
 - **web** — DuckDuckGo search, no API key
 - **notes** — semantic search over your `/index`ed notes

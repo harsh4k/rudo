@@ -1,6 +1,7 @@
 """Rudo tests: pytest. No Ollama needed — a stub server stands in for it."""
 import io
 import json
+import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -236,6 +237,125 @@ def test_index_reports_embedding_mismatch(stub_ollama, keyboard, quiet, tmp_path
     embed_short[0] = True  # core hands back fewer vectors than chunks
     run_chat(monkeypatch, tmp_path, keyboard, [f"/index {notes}", "/quit"])
     assert "index failed" in quiet.export_text()  # reported, chat kept running
+
+
+
+# ----------------------------------------------------------------- platform
+
+@pytest.fixture
+def on(monkeypatch):
+    """on("linux"|"mac"|"win", tools=[...]): pretend to be that OS with only those
+    binaries installed. Returns the list of commands subprocess.run was given."""
+    calls: list[list[str]] = []
+
+    def setup(os_name, tools=(), result=None, wayland=True, x11=True):
+        for var, value, present in (("WAYLAND_DISPLAY", "wayland-0", wayland),
+                                    ("DISPLAY", ":0", x11)):
+            if present:
+                monkeypatch.setenv(var, value)
+            else:
+                monkeypatch.delenv(var, raising=False)
+        monkeypatch.setattr(rudo, "IS_WIN", os_name == "win")
+        monkeypatch.setattr(rudo, "IS_MAC", os_name == "mac")
+        monkeypatch.setattr(rudo.shutil, "which", lambda name: name if name in tools else None)
+
+        def fake_run(cmd, **_):
+            calls.append(cmd)
+            return result(cmd) if result else subprocess.CompletedProcess(cmd, 0, "clip!", "")
+        monkeypatch.setattr(rudo.subprocess, "run", fake_run)
+        return calls
+    return setup
+
+
+@pytest.mark.parametrize("os_name, tools, first", [
+    ("win", ["powershell"], "powershell"),
+    ("mac", ["pbpaste"], "pbpaste"),
+    ("linux", ["wl-paste", "xclip"], "wl-paste"),
+    ("linux", ["xsel"], "xsel"),
+])
+def test_clipboard_uses_the_platform_tool(on, os_name, tools, first):
+    calls = on(os_name, tools)
+    assert rudo.clipboard_text() == "clip!"
+    assert calls[0][0] == first
+
+
+def test_clipboard_falls_back_then_reports_empty(on):
+    def fails(cmd):
+        return subprocess.CompletedProcess(cmd, 1, "", "no wayland / target not available")
+    calls = on("linux", ["wl-paste", "xclip"], fails)
+    assert rudo.clipboard_text() == ""  # tools ran, clipboard just empty
+    assert [c[0] for c in calls] == ["wl-paste", "xclip"]
+
+
+def test_clipboard_none_without_any_tool(on):
+    on("linux", [])
+    assert rudo.clipboard_text() is None
+
+
+def test_clipboard_skips_tools_for_a_missing_display(on):
+    # X11 session with only wl-clipboard installed: that's no access, not an empty clipboard
+    calls = on("linux", ["wl-paste"], wayland=False)
+    assert rudo.clipboard_text() is None and calls == []
+    calls = on("linux", ["wl-paste", "xclip"], wayland=False)
+    rudo.clipboard_text()
+    assert calls[-1][0] == "xclip"
+
+
+def test_wl_paste_asks_for_text_only(on):
+    calls = on("linux", ["wl-paste"])
+    rudo.clipboard_text()
+    assert calls[0][-2:] == ["--type", "text"]
+
+
+def test_windows_powershell_uses_utf8(on):
+    calls = on("win", ["powershell"])
+    rudo.clipboard_text()
+    assert "UTF8" in calls[0][-1]
+    assert "UTF8" in rudo.SAPI
+
+
+@pytest.mark.parametrize("os_name, tools, engine", [
+    ("win", ["powershell"], "powershell"),
+    ("mac", ["say"], "say"),
+    ("linux", ["espeak-ng", "espeak"], "espeak-ng"),
+    ("linux", ["espeak"], "espeak"),
+    ("linux", ["spd-say"], "spd-say"),
+    ("linux", [], None),
+])
+def test_tts_picks_the_platform_engine(on, os_name, tools, engine):
+    on(os_name, tools)
+    cmd = rudo.tts_command()
+    assert (cmd[0] if cmd else None) == engine
+
+
+def test_speak_without_engine_does_nothing(on):
+    calls = on("linux", [])
+    rudo.speak("hello")
+    assert calls == []
+
+
+def test_speech_failure_is_one_line(on, quiet):
+    def no_audio(cmd):
+        return subprocess.CompletedProcess(cmd, 1, "", "ALSA lib noise\n" * 20 + "error: no card")
+    on("linux", ["espeak-ng"], no_audio)
+    rudo.speak("hello")
+    out = quiet.export_text()
+    assert "speech failed" in out and "error: no card" in out and "ALSA" not in out
+
+
+def test_clip_marks_context_private(stub_ollama, keyboard, quiet, tmp_path, monkeypatch):
+    replies, _, _ = stub_ollama
+    replies += ["It's a function.", '{"tool": "web", "arg": "def add"}', "ok"]
+    monkeypatch.setattr(rudo, "clipboard_text", lambda: "def add(a, b): ...")
+    history = run_chat(monkeypatch, tmp_path, keyboard, ["/clip", "search it", "n", "/quit"])
+    assert rudo.CLIP_MARKER in history[0]["content"] and "def add" in history[0]["content"]
+    assert "TOOL RESULT (web):\nuser declined the web search" in [m["content"] for m in history]
+
+
+def test_clip_without_clipboard_tool(keyboard, quiet, tmp_path, monkeypatch):
+    monkeypatch.setattr(rudo, "clipboard_text", lambda: None)
+    assert run_chat(monkeypatch, tmp_path, keyboard, ["/clip", "/quit"]) == []
+    assert "no clipboard access" in quiet.export_text()
 
 
 if __name__ == "__main__":  # `python test_rudo.py` still works
