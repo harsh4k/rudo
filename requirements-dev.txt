@@ -1,0 +1,3 @@
+# test + lint tools, on top of requirements.txt
+pytest>=8
+ruff>=0.6

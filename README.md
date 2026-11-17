@@ -73,9 +73,13 @@ Edit the `SYSTEM` and `PARAMETER` lines in `Modelfile`, then rebuild:
 
 ## Tests
 
-    python test_rudo.py
+    pip install -r requirements-dev.txt
+    python -m pytest        # or: python test_rudo.py
+    ruff check .
 
-Smallest checks that fail if the tool-call parsing/dispatch breaks.
+The suite needs no Ollama: a stub server stands in for it, so the chat loop,
+tool calls and confirmations are tested end to end. CI runs it on Windows,
+macOS and Linux.
 
 ## Specs it was tuned for
 

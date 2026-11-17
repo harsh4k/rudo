@@ -20,7 +20,8 @@ from rich.padding import Padding
 from rich.table import Table
 from rich.text import Text
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # piped/legacy consoles default to cp1252
+# piped/legacy consoles default to cp1252
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 OLLAMA = os.environ.get("RUDO_OLLAMA", "http://localhost:11434")
 MODEL = "rudo"
@@ -54,7 +55,7 @@ def check_core() -> dict:
         with urllib.request.urlopen(f"{OLLAMA}/api/tags", timeout=3) as r:
             return json.load(r)
     except OSError:
-        raise RuntimeError("CORE OFFLINE — start Ollama and retry.")
+        raise RuntimeError("CORE OFFLINE — start Ollama and retry.") from None
 
 
 def check_model(tags: dict) -> None:
@@ -125,7 +126,9 @@ def sysinfo() -> str:
     except ImportError:  # ponytail: degrade to clock-only rather than die over a stats lib
         return f"LIVE STATUS: {now}"
     batt = psutil.sensors_battery()
-    power = f" · battery {batt.percent:.0f}%{'' if batt.power_plugged else ' UNPLUGGED'}" if batt else ""
+    power = ""
+    if batt:
+        power = f" · battery {batt.percent:.0f}%{'' if batt.power_plugged else ' UNPLUGGED'}"
     return (f"LIVE STATUS: {now} · CPU {psutil.cpu_percent():.0f}%"
             f" · RAM {psutil.virtual_memory().percent:.0f}%{power} · cwd {os.getcwd()}")
 
@@ -144,9 +147,12 @@ def embed(texts: list[str]) -> list[list[float]]:
     )
     try:
         with urllib.request.urlopen(req, timeout=300) as r:
-            return json.load(r)["embeddings"]
+            vecs = json.load(r)["embeddings"]
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"embedding failed ({e.code}) — run: ollama pull {EMBED_MODEL}") from e
+    if len(vecs) != len(texts):
+        raise RuntimeError(f"embedding failed — asked for {len(texts)} vectors, got {len(vecs)}")
+    return vecs
 
 
 def index_folder(folder: str) -> int:
@@ -163,7 +169,7 @@ def index_folder(folder: str) -> int:
             chunks.append({"src": p.name, "text": text[i:i + 1500]})
     for i in range(0, len(chunks), 32):
         batch = chunks[i:i + 32]
-        for chunk, vec in zip(batch, embed([c["text"] for c in batch])):
+        for chunk, vec in zip(batch, embed([c["text"] for c in batch]), strict=True):
             chunk["vec"] = vec
     RAG_FILE.write_text(json.dumps(chunks), encoding="utf-8")
     return len(chunks)
@@ -413,7 +419,8 @@ def boot_sequence(history: list[dict]) -> None:
             type_line("")
             type_line("RUNNING DIAGNOSTICS", pause=0.4)
             type_line("")
-            for label in ("INPUT", "RENDERER", "MEMORY"):  # ponytail: theater — nothing real to probe
+            # ponytail: theater — nothing real to probe
+            for label in ("INPUT", "RENDERER", "MEMORY"):
                 log.append(f"  {label:<14}", "grey85")
                 type_line("OK", "bold green", pause=0.18)
             type_line("")
@@ -434,7 +441,8 @@ def boot_sequence(history: list[dict]) -> None:
         if not error:
             try:
                 import winsound
-                winsound.MessageBeep()  # ponytail: single boot chime; per-keystroke sounds are annoying
+                # ponytail: single boot chime; per-keystroke sounds are annoying
+                winsound.MessageBeep()
             except Exception:
                 pass
             time.sleep(0.8)
@@ -517,7 +525,7 @@ def maybe_tool_call(text: str) -> bool:
 
 def converse(history: list[dict]) -> str:
     """Stream one reply (spinner + live markdown). Empty string on failure."""
-    reply, shown = "", False
+    reply, shown, gen = "", False, None
     console.print()
     try:
         messages = [{"role": "system", "content": f"{sysinfo()}\n\n{TOOL_PROMPT}"}] + history
@@ -561,6 +569,9 @@ def converse(history: list[dict]) -> str:
     except (OSError, json.JSONDecodeError) as e:
         console.print(f"[bold red]Link lost:[/] {e}")
         return ""  # a half-received reply is not an answer — drop the exchange
+    finally:
+        if close := getattr(gen, "close", None):  # early return mustn't leak the http stream
+            close()
     return reply
 
 
@@ -653,7 +664,8 @@ def chat(history: list[dict]) -> None:
                 private = private or has_private(history)
                 result = run_tool(call, private)
                 console.print(tool_trace(call, result))
-                history.append({"role": "user", "content": f"TOOL RESULT ({call['tool']}):\n{result}"})
+                history.append({"role": "user",
+                                "content": f"TOOL RESULT ({call['tool']}):\n{result}"})
                 reply = converse(history)
                 if not reply:
                     break

@@ -1,0 +1,13 @@
+# Tool config only — rudo is a single script, not an installable package.
+# Python 3.12+ (math.sumprod).
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = ["test_*.py"]
