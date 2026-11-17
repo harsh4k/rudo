@@ -102,6 +102,15 @@ def load_history() -> list[dict]:
         return []
 
 
+def trim_history(history: list[dict]) -> None:
+    """Keep the last MAX_HISTORY messages, starting on a real user turn — never on an
+    orphaned reply or tool result whose question was cut off."""
+    del history[:-MAX_HISTORY]
+    while history and (history[0]["role"] != "user"
+                       or history[0]["content"].startswith("TOOL RESULT")):
+        del history[0]
+
+
 def save_history(history: list[dict]) -> None:
     HISTORY_FILE.write_text(json.dumps(history, indent=1), encoding="utf-8")
 
@@ -292,6 +301,15 @@ def find_tool_call(reply: str) -> dict | None:
     return None
 
 
+def tool_trace(call: dict, result: str) -> Text:
+    """One dim line saying what a tool did — shown instead of the raw JSON call."""
+    arg = " ".join(str(call.get("arg", "")).split())
+    summary = " ".join(result.split())
+    return Text.assemble((f"[{stamp()}] ", "dim"), ("⚙ ", "yellow"), (call["tool"], "yellow"),
+                         (f" {arg[:60]}{'…' if len(arg) > 60 else ''}", "dim"),
+                         (f"  → {summary[:120]}{'…' if len(summary) > 120 else ''}", "dim"))
+
+
 def run_tool(call: dict, private: bool) -> str:
     """Execute one tool call. Once private data has been in the context, a web query
     could carry it off the machine, so model-initiated web searches need the user's OK."""
@@ -446,12 +464,13 @@ COMMANDS = (
 
 
 def command_lines() -> Table:
-    # two command pairs per row — full width, no box
-    grid = Table.grid(padding=(0, 2))
-    for i in range(0, len(COMMANDS), 2):
+    # two command pairs per row when there's room, one on narrow terminals — no box
+    per_row = 2 if console.width >= 100 else 1
+    grid = Table.grid(padding=(0, 3))
+    for i in range(0, len(COMMANDS), per_row):
         row = []
-        for cmd, desc in COMMANDS[i:i + 2]:
-            row += [Text(f"{cmd:<9}", "bold cyan"), Text(f"{desc:<36}", "dim")]
+        for cmd, desc in COMMANDS[i:i + per_row]:
+            row += [Text(cmd, "bold cyan"), Text(desc, "dim")]
         grid.add_row(*row)
     return grid
 
@@ -484,9 +503,21 @@ def print_header(history: list[dict]) -> None:
     console.print(command_lines())
 
 
+def maybe_tool_call(text: str) -> bool:
+    """Could this partial reply still turn out to be a bare tool call ({...} or a
+    ```json fence around one)? Then hold it back instead of streaming it."""
+    if len(text) >= 1000:
+        return False
+    rest = text.lstrip().lstrip("`")
+    if "json".startswith(rest.lower()):  # "", "`", "```js" — too early to tell
+        return True
+    rest = rest.removeprefix("json").lstrip()
+    return not rest or rest.startswith("{")
+
+
 def converse(history: list[dict]) -> str:
     """Stream one reply (spinner + live markdown). Empty string on failure."""
-    reply = ""
+    reply, shown = "", False
     console.print()
     try:
         messages = [{"role": "system", "content": f"{sysinfo()}\n\n{TOOL_PROMPT}"}] + history
@@ -507,9 +538,17 @@ def converse(history: list[dict]) -> str:
             threading.Thread(target=spin, daemon=True).start()
             try:
                 reply = next(gen, "")
+                while maybe_tool_call(reply):  # keep spinning: a tool call isn't an answer
+                    token = next(gen, None)
+                    if token is None:
+                        break
+                    reply += token
             finally:
                 stop.set()
+        if maybe_tool_call(reply) and find_tool_call(reply):
+            return reply  # bare tool call: chat() runs it and shows a ⚙ line instead
         console.print(Text.assemble((f"[{stamp()}] ", "dim"), ("< RUDO:", "bold bright_cyan")))
+        shown = True
         with Live(Markdown(reply, style="cyan"), console=console, refresh_per_second=10,
                   vertical_overflow="visible") as live:
             for token in gen:
@@ -517,6 +556,8 @@ def converse(history: list[dict]) -> str:
                 live.update(Markdown(reply, style="cyan"))
     except KeyboardInterrupt:
         console.print("[dim]— interrupted[/]")
+        if not shown:  # stopped before anything appeared — that includes a hidden tool call
+            return ""
     except (OSError, json.JSONDecodeError) as e:
         console.print(f"[bold red]Link lost:[/] {e}")
         return ""  # a half-received reply is not an answer — drop the exchange
@@ -582,6 +623,9 @@ def chat(history: list[dict]) -> None:
                 continue
             ask = user.removeprefix("/clip").strip() or "Explain or summarize this for me."
             user = f"{ask}\n\n{CLIP_MARKER}\n```\n{clip[:4000]}\n```"
+        elif user.split()[0] in ("/web", "/notes") and not user.split(maxsplit=1)[1:]:
+            console.print(f"[dim]usage:[/] [bold cyan]{user} <question>[/]")
+            continue
         elif user.startswith("/web "):
             q = user.removeprefix("/web ").strip()
             with console.status("[yellow]searching…[/]"):
@@ -608,16 +652,18 @@ def chat(history: list[dict]) -> None:
                     break
                 private = private or has_private(history)
                 result = run_tool(call, private)
-                console.print(Text(f"⚙ {call['tool']}: {' '.join(result.split())[:200]}", "dim"))
+                console.print(tool_trace(call, result))
                 history.append({"role": "user", "content": f"TOOL RESULT ({call['tool']}):\n{result}"})
                 reply = converse(history)
                 if not reply:
                     break
                 history.append({"role": "assistant", "content": reply})
-            if SPEAK and reply:
+            if reply and find_tool_call(reply):  # still asking for tools after the last round
+                console.print("[dim]tool limit reached for this message — ask again to continue[/]")
+            elif SPEAK and reply:
                 speak(reply)
         private = private or has_private(history)
-        del history[:-MAX_HISTORY]
+        trim_history(history)
         save_history(history)
 
 
